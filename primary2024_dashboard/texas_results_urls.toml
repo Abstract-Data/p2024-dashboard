@@ -1,0 +1,3 @@
+
+county_url = "https://results.texas-election.com/static/data/election/{num}/{num2}/County.json"
+office_url = "https://results.texas-election.com/static/data/election/{num}/{num2}/OfficeSummary.json"
