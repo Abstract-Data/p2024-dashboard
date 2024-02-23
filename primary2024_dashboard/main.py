@@ -1,6 +1,5 @@
 from db_connect import Base, Session, engine
-import result_models as models
-from result_scraper import county_results, office_summary
+from process.electionnight import models, county_results, office_summary
 
 county_models = []
 race_models = []

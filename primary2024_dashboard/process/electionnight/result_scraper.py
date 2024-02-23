@@ -2,8 +2,8 @@ import cfscrape
 import json
 import result_validators as validators
 from pathlib import Path
-from logger import Logger
-from utils import read_toml_file
+from ...logger import Logger
+from ...utils import read_toml_file
 
 EXAMPLES = (47009, 242), (47010, 278), (49681, 665)
 

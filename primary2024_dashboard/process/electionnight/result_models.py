@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Boolean
 from sqlalchemy.orm import relationship
-from db_connect import Base
+from ...db_connect import Base
 
 
 class CandidateDetailsModel(Base):
