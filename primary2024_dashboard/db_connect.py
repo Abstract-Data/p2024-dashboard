@@ -1,26 +1,15 @@
 from snowflake.snowpark import Session
+from snowflake.connector import connect
+from snowflake.sqlalchemy import URL
 from dotenv import load_dotenv
 import os
 from pathlib import Path
-from typing import ClassVar, Dict
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-import sqlite3
+from typing import Dict
 
-
-""" LOCAL SQL LITE DATABASE CONNECTION """
-conn = sqlite3.connect(f'{Path(__file__).parent / "p2024_results.db"}')
-
-Base = declarative_base()
-
-engine = create_engine(f'sqlite:///{Path(__file__).parent / "p2024_results.db"}')
-
-SessionLocal = sessionmaker(bind=engine)
-
-
-""" SNOWFLAKE SNOWPARK CONNECTION """
 path = Path(__file__).parent / "process" / '.env'
 load_dotenv(path)
+
+""" SNOWFLAKE SNOWPARK CONNECTION """
 
 SNOWFLAKE_SNOWPARK_PARAMS: Dict[str, str] = {
     "account": os.environ['SNOWFLAKE_VEP_ACCOUNT'],
@@ -29,7 +18,7 @@ SNOWFLAKE_SNOWPARK_PARAMS: Dict[str, str] = {
     "database": "VEP",
     "warehouse": os.environ['SNOWFLAKE_VEP_WAREHOUSE'],
     "role": os.environ['SNOWFLAKE_VEP_ROLE'],
-    "schema": "VEP2024"
+    "schema": "ELECTIONHISTORY_TX"
 }
 
-SnowparkSession = Session.builder.configs(SNOWFLAKE_SNOWPARK_PARAMS)
+SnowparkSession = Session.builder.configs(SNOWFLAKE_SNOWPARK_PARAMS).create()

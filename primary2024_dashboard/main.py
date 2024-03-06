@@ -1,72 +1,78 @@
-from db_connect import Base, Session, engine
-from process.electionnight import models, county_results, office_summary
+import pandas as pd
+from primary2024_dashboard.process.earlyvote import ElectionYearData, LoadToSnowflake
+from typing import Generator, Dict, Annotated, Optional, List
+from pathlib import Path
+from datetime import date, datetime
+import csv
+import itertools
+from pydantic import BaseModel, Field, AliasChoices, field_validator, model_validator, EmailStr, ConfigDict, ValidationInfo
+from pydantic_extra_types.phone_numbers import PhoneNumber
+from tqdm import tqdm
+import hashlib
+import phonenumbers
 
-county_models = []
-race_models = []
-candidate_models = []
-for county_number, county in enumerate(county_results):
-    county_models.append(models.CountyElectionDetailsModel(
-        countyName=county.countyName,
-        countyTotalVotes=county.countyTotalVotes,
-        countyPaletteColor=county.countyPaletteColor,
-        update_time=county.update_time
-    ))
-    for race in county.countyRaces:
-        race_models.append(models.RaceDetailsModel(
-            officeId=race.officeId,
-            officeName=race.officeName,
-            officeTotalVotes=race.officeTotalVotes,
-            race_summary_id=int(race.officeId),
-            county_id=county.countyName))
-        for candidate in race.officeCandidates:
-            candidate_models.append(models.CandidateDetailsModel(
-                candidateName=candidate.candidateName,
-                candidateParty=candidate.candidateParty,
-                candidateFirstName=candidate.candidateFirstName,
-                candidateLastName=candidate.candidateLastName,
-                candidateIncumbent=candidate.candidateIncumbent,
-                candidateEarlyVotes=candidate.candidateEarlyVotes,
-                candidateElectionDayVotes=candidate.candidateElectionDayVotes,
-                candidateTotalVotes=candidate.candidateTotalVotes,
-                candidatePercentage=candidate.candidatePercentage,
-                candidatePaletteColor=candidate.candidatePaletteColor,
-                race_county_id=county.countyName,
-                race_id=int(race.officeId)
-            ))
 
-race_summaries = []
-candidate_summaries = []
-for summary in office_summary:
-    race_summaries.append(models.RaceSummaryDetailsModel(
-        officeId=summary.officeId,
-        officeName=summary.officeName,
-        race_details_id=int(summary.officeId),
-        update_time=summary.update_time
-    ))
-    for candidate in summary.officeCandidates:
-        candidate_summaries.append(models.CandidateSummaryDetailsModel(
-            candidateName=candidate.candidateName,
-            candidateParty=candidate.candidateParty,
-            candidatePaletteColor=candidate.candidatePaletteColor,
-            candidateTotalVotes=candidate.candidateTotalVotes,
-            candidateBallotOrder=candidate.candidateBallotOrder,
-            race_summary_id=int(summary.officeId)
-        ))
+pd.set_option('display.max_columns', None)
+pd.set_option('display.max_rows', None)
 
-Base.metadata.create_all(engine)
+EXPORT_FOLDER = Path(__file__).parent / "data" / "exports"
 
-with Session() as session:
-    session.add_all(county_models)
-    session.commit()
+p2024r = ElectionYearData("2024", party="r")
+p2024d = ElectionYearData("2024", party="d")
 
-    session.add_all(race_models)
-    session.commit()
+# df = p2024.to_df()
 
-    session.add_all(candidate_models)
-    session.commit()
-
-    session.add_all(race_summaries)
-    session.commit()
-
-    session.add_all(candidate_summaries)
-    session.commit()
+# in_person = df[df['vote_method'] == 'IN-PERSON']
+# vote_method = pd.crosstab([in_person['county'], in_person['vote_method']], in_person['vote_date'], margins=True)
+#
+# in_person = df[(df['vote_method'] == 'IN-PERSON') & (df['vote_date'] < date(2024, 2, 20))]
+#
+#
+# # Get data for all vuids that are duplicates
+# duplicates = df.duplicated(
+#     subset=[
+#         'vuid',
+#         'first_name'],
+#     keep=False
+# )
+#
+# df_duplicates = df[duplicates]
+#
+# df_duplicate_count = df_duplicates.drop_duplicates(keep='first')
+#
+# crosstabs = pd.crosstab(
+#     [
+#         df_duplicates['county'],
+#         df_duplicates['precinct'],
+#         df_duplicates['poll_place_id'],
+#         df_duplicates['poll_place_name'],
+#         df_duplicates['vuid'],
+#         df_duplicates['first_name'],
+#         df_duplicates['last_name'],
+#         df_duplicates['full_name'],
+#         df_duplicates['vote_date'],
+#     ],
+#     columns=df_duplicates['vote_method'],
+#     margins=True
+# )
+#
+# by_county_duplicates = pd.crosstab(
+#     [df_duplicates['county'], df_duplicates['vote_method']],
+# df['vote_date'],
+# margins=True)
+#
+# by_county_vote_totals = df.groupby('county')['vuid'].count()
+#
+# dupes = by_county_duplicates.reset_index()
+# totals = by_county_vote_totals.reset_index()
+#
+# by_county_combined = pd.merge(dupes, totals, on='county')
+#
+# by_county_combined['percent_duplicates'] = by_county_combined['All'] / by_county_combined['vuid']
+#
+# crosstabs.to_csv(EXPORT_FOLDER / "20240229_gop_duplicates.csv"
+# )
+#
+# by_county_combined.to_csv(EXPORT_FOLDER / "20240229_gop_dupes_bycounty.csv")
+#
+# print(crosstabs)

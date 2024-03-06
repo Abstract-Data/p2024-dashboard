@@ -1,306 +1,170 @@
 from pathlib import Path
 from primary2024_dashboard.utils.csv_reader import read_files_in_directory
-from primary2024_dashboard.process.earlyvote.earlyvoter_validation import VoterDetails
-from primary2024_dashboard.process.earlyvote.earlyvoter_model import VoterDetailModel
-from primary2024_dashboard.db_connect import (
-    SnowparkSession,
-    Base,
-    SessionLocal,
-    engine,
-    conn
-)
+from .ev_validator import VoterDetails
+from .sos_intake_validator import SOSVoterIntake
+from . import ev_definitions as define
+from primary2024_dashboard.db_connect import SnowparkSession
 from snowflake.snowpark.functions import col
-from typing import Generator, List
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from typing import Generator, List, Dict, ClassVar
 import pandas as pd
 from primary2024_dashboard.logger import Logger
 from dataclasses import dataclass
-import matplotlib.pyplot as plt
 
-make_null_list = [
-    'general_count',
-    'primary_count',
-    'primary_count_dem',
-    'primary_count_rep',
-    'primary_percent_dem',
-    'general_percent_dem',
-    'primary_percent_rep',
-    'general_percent_rep',
-    'age'
-]
+FLDR_PATH = Path(__file__).parents[2] / "data" / "earlyvote_days"
 
-column_list = ['county', 'sd', 'hd', 'cd', 'vote_method', 'age_range',
-               'vep_registration', 'day_in_ev', 'primary_count_dem', 'primary_count_rep', 'year']
+""" DAILY TURNOUT CROSSTAB CONSTANTS """
 
 
-class ElectionYearData:
-    def __init__(self, year: str, path: Path = Path(__file__).parents[2] / "data" / "earlyvote_days"):
-        self.year = year
-
-        if year == "2024":
-            self.path = path / year / "march_primary"
-        else:
-            self.path = path / year
-        self.data = read_files_in_directory(self.path)
-
-    def __iter__(self):
-        return self.data
-
-    def __next__(self):
-        return next(self.data)
-
-    def __len__(self):
-        return len(list(self.data))
-
-    def to_df(self) -> pd.DataFrame:
-        df = pd.DataFrame([dict(x) for x in self.data])
-        df = df.fillna(pd.NA)
-        return df
-
-
-class EarlyVoteData:
-    snowpark = SnowparkSession.create()
-    eh2020 = ElectionYearData("2020")
-    eh2022 = ElectionYearData("2022")
-    eh2024 = ElectionYearData("2024")
-    logger = Logger(module_name="EarlyVoteData")
-
-    # def __init__(
-    #         self,
-    #         eh2020=ElectionYearData("2020"),
-    #         eh2022=ElectionYearData("2022"),
-    #         eh2024=ElectionYearData("2024")
-    # ):
-    #     self.eh2020 = eh2020
-    #     self.eh2022 = eh2022
-    #     self.eh2024 = eh2024
-    @classmethod
-    def compile(cls, records: ElectionYearData = None) -> Generator[VoterDetails, None, None]:
-        cls.logger.debug(f".compile() called")
-        if records is None:
-            records = cls.eh2024
-
-        data = [dict(x) for x in records.data]
-        if records == cls.eh2024:
-            cls.logger.debug(f"Compiling 2024 records")
-            vep_registrations = EarlyVoteData.snowpark.table(
-                'ALL_VEP_VUIDS'
-            ).select(
-                'VUID'
-            )
-            cls.logger.debug(f"Pulling VEP Registrations")
-
-            vep_registrations = vep_registrations.rename(
-                {
-                    'VUID': 'VEP_VUID'
-                }
-            )
-            current_early_voters = EarlyVoteData.snowpark.create_dataframe(data, schema=list(
-                data[0].keys()))  # Load data into Snowpark
-            cls.logger.debug(f"Pulling early voters")
-
-            previous_voting_history = EarlyVoteData.snowpark.table(
-                'ELECTIONHISTORY'
-            ).filter(
-                col(
-                    'VUID'
-                ).isin(
-                    current_early_voters.select(
-                        'ID_VOTER'
-                    )
-                )
-            )
-            previous_voting_history = previous_voting_history.rename({'VUID': 'EH_VUID'})
-            cls.logger.debug(f"Pulled voting history")
-
-            state_voterfile = EarlyVoteData.snowpark.table(
-                'VOTERFILE'
-            ).select(
-                'VUID',
-                'DOB',
-                'STATE_LEGISLATIVE_UPPER',
-                'STATE_LEGISLATIVE_LOWER',
-                'CONGRESSIONAL'
-            ).filter(
-                col(
-                    'VUID'
-                ).isin(
-                    current_early_voters.select(
-                        'ID_VOTER'
-                    )
-                )
-            )
-            cls.logger.debug(f"Pulled voterfile")
-
-            add_dob = current_early_voters.join(state_voterfile, col('ID_VOTER') == col('VUID'), 'inner')
-            cls.logger.debug(f"Joined dobs with early voters")
-            add_vep_registrations = add_dob.join(vep_registrations, col('ID_VOTER') == col('VEP_VUID'), 'left')
-            cls.logger.debug(f"Joined VEP registrations with early voters")
-            voter_ev_history = add_vep_registrations.join(previous_voting_history, col('ID_VOTER') == col('EH_VUID'),
-                                                          'left')
-            cls.logger.debug(f"Joined voting history with early voters")
-
-        else:
-            cls.logger.debug(f"Compiling previous year records")
-            previous_election_history = EarlyVoteData.snowpark.create_dataframe(data, schema=list(data[0].keys()))
-            cls.logger.debug(f"Pulling voters")
-            state_voterfile = EarlyVoteData.snowpark.table(
-                'VOTERFILE'
-            ).select(
-                'VUID',
-                'DOB',
-                'STATE_LEGISLATIVE_UPPER',
-                'STATE_LEGISLATIVE_LOWER',
-                'CONGRESSIONAL'
-            ).filter(
-                col(
-                    'VUID'
-                ).isin(
-                    previous_election_history.select(
-                        'ID_VOTER'
-                    )
-                )
-            )
-            voter_ev_history = previous_election_history.join(state_voterfile, col('ID_VOTER') == col('VUID'), 'inner')
-            cls.logger.debug(f"Joined voters with voterfile")
-
-        voter_ev_history = (voter_ev_history.to_pandas().to_dict(orient='records'))
-        cls.logger.debug(f"Returning records")
-        return (VoterDetails(**dict(x)) for x in voter_ev_history)
-
-    @classmethod
-    def update(cls) -> None:
-        cls.logger.info("Updating 2024 voter records in database")
-        Base.metadata.create_all(bind=engine)
-        with SessionLocal() as session:
-            for record in cls.compile():
-                stmt = sqlite_insert(VoterDetailModel).values(**dict(record))
-                on_conflict_stmt = stmt.on_conflict_do_update(
-                    index_elements=['vuid'],
-                    set_=dict(stmt.excluded)
-                )
-                session.execute(on_conflict_stmt)
-            session.commit()
-            cls.logger.info("2024 voter records updated in database")
-
-    @staticmethod
-    def fetch() -> Generator[VoterDetails, None, None]:
-        EarlyVoteData.logger.info("Fetching 2024 records from database")
-        with SessionLocal() as session:
-            for record in session.query(VoterDetailModel).all():
-                yield VoterDetails.model_construct(**record.__dict__)
-
-    @classmethod
-    def to_df(cls, records: ElectionYearData = None) -> pd.DataFrame:
-        cls.logger.debug("Converting records to dataframe")
-        if records is None:
-            records = cls.fetch()
-        else:
-            records = cls.compile(records)
-        df = pd.DataFrame([dict(x) for x in records])
-        df = df.fillna(pd.NA)
-        df[make_null_list] = df[make_null_list].replace(0, pd.NA)
-        cls.logger.debug("Returning dataframe")
-        return df
-
-
-ev_data = EarlyVoteData()
-
-ev_data.update()
-
-ev2020 = ev_data.to_df(ev_data.eh2020)
-ev2022 = ev_data.to_df(ev_data.eh2022)
-ev2024 = ev_data.to_df()
-
-ev2020['year'] = 2020
-ev2022['year'] = 2022
-ev2024['year'] = 2024
+def convert_nulls(val: pd.DataFrame) -> pd.DataFrame:
+    # def wrapper(*args, **kwargs) -> DataFrame:
+    #     val: DataFrame = func(*args, **kwargs)
+    val: pd.DataFrame = val.astype(object).where(pd.notnull(val), None)
+    return val
 
 
 def reduce_columns(df: pd.DataFrame, columns: List = None) -> pd.DataFrame:
+    """Reduce columns in dataframe to a specified list"""
     if not columns:
-        columns = column_list
+        columns = define.CONDENSED_COLS
     return df[columns]
 
 
-def replace_full_history():
-    return pd.concat(
-        [
-            reduce_columns(x) for x in [ev2020, ev2022, ev2024]
-        ],
-        ignore_index=True
-    ).sort_values(
-        by='day_in_ev'
-    ).to_sql(
-        'full_turnout_roster',
-        con=conn,
-        if_exists='replace',
-        index=False
-)
+class ElectionYearData:
+
+    def __init__(self, year: str, party: str = None, path: Path = FLDR_PATH):
+        self.year = year
+        self.logger = Logger(module_name="ElectionYearData")
+        if party:
+            if party.lower() in ["democrat", "democratic", "dem", "d"]:
+                self.party = "dem"
+            elif party.lower() in ["republican", "rep", "gop", "r"]:
+                self.party = "rep"
+            else:
+                raise ValueError("Party must be 'dem' or 'rep'")
+
+        if self.party:
+            self.path = path / year / "primary" / self.party
+        else:
+            self.path = path / year
+        self.logger.debug(f"Started reading {self.party.title()} primary data for {self.year}")
+        self.data = iter(
+            SOSVoterIntake(
+                **dict(x)
+            ) for x in read_files_in_directory(
+                self.path,
+                primary_party=self.party if party else None
+            )
+        )
+        self.logger.debug(f"Finished reading {self.party.title()} primary data for {self.year}")
+
+    def __repr__(self):
+        return f"ElectionYearData(year={self.year}, party={self.party})"
+
+    # def __iter__(self):
+    #     return self.data
+    #
+    # def __next__(self):
+    #     return next(self.data)
+    #
+    # def __len__(self):
+    #     return len(list(self.data))
+
+    def to_df(self) -> pd.DataFrame:
+        _data = self.data
+        df = pd.DataFrame([dict(x) for x in _data])
+        df = df.fillna(pd.NA)  # Change None values to pd.NA
+        return df
 
 
 @dataclass
-class DailyTurnoutCrosstabs:
-    all_elections: pd.DataFrame = pd.read_sql("SELECT * FROM full_turnout_roster", con=conn)
+class LoadToSnowflake:
+    logger: ClassVar[Logger] = Logger(module_name="LoadToSnowflake")
+    session: SnowparkSession = SnowparkSession
 
-    def __post_init__(self):
-        df = self.all_elections
-        self.potus = df[df['year'].isin(['2020', '2024'])]
-        self.current = df[df['year'] == '2024']
-        self.byDay = pd.crosstab(
-            df['day_in_ev'],
-            df['year']
-        )
-        self.byDayAge = pd.crosstab(
-            [df['age_range'], df['year']],
-            df['day_in_ev']
-        )
+    @classmethod
+    def update_with_snowflake(cls, records: Generator[SOSVoterIntake, None, None]) -> List[Dict]:
+        session = cls.session
+        cls.logger.info("Extracting records to load into Snowflake")
 
-        self.byDayCounty = pd.crosstab(
-            [df['county'], df['year']],
-            df['day_in_ev']
-        )
+        extracted_records = [dict(x) for x in records]
+        # Create dataframe from local data
+        load_records = session.create_dataframe(extracted_records, schema=list(extracted_records[0].keys()))
+        cls.logger.info(f"Created dataframe from local data")
 
-        self.byDaySenate = pd.crosstab(
-            [df['sd'].astype(int), df['year']],
-            df['day_in_ev'],
-        )
+        # Create voterfile dataframe
+        voterfile = session.table(define.DB_VOTERFILE_TABLE).select(
+            define.VOTERID_COL, 'DOB', define.REGISTRATION_DATE_COL, define.SENATE_DISTRICT_COL,
+            define.HOUSE_DISTRICT_COL, 'CONGRESSIONAL')
 
-        self.byDayHouse = pd.crosstab(
-            [df['hd'].astype(int), df['year']],
-            df['day_in_ev']
-        )
+        # Create election history dataframe
+        election_history = session.table(define.DB_ELECTIONHISTORY_TABLE)
 
-        self.byDayCongressional = pd.crosstab(
-            [df['cd'].astype(int), df['year']],
-            df['day_in_ev']
-        )
+        # Rename join columns in dataframes
+        voterfile = voterfile.rename({define.VOTERID_COL: 'VF_VUID'})
+        election_history = election_history.rename({define.VOTERID_COL: 'EH_VUID'})
+        cls.logger.debug(f"Created voterfile and election history dataframes, renamed join columns")
 
-        self.byDayVEP = pd.crosstab(
-            df['year'],
-            [df['day_in_ev'], df['vep_registration']]
-        )
+        # Join dataframes
+        merge_records_and_voterfile = load_records.join(voterfile, col(define.VOTERID_COL) == col('VF_VUID'), 'left')
+        cls.logger.debug(f"Joined records with voterfile")
+        merge_election_history = merge_records_and_voterfile.join(election_history,
+                                                                  col(define.VOTERID_COL) == col('EH_VUID'),
+                                                                  'left')
+        cls.logger.debug(f"Joined records with election history")
 
-        self.byDayHouseCounty = pd.crosstab(
-            [df['hd'].astype(int), df['county']],
-            [df['year'], df['day_in_ev']]
-        )
+        # Convert to local pandas dataframe, then to dictionary records
+        to_record_dicts = (merge_election_history.toPandas().to_dict(orient='records'))
+        cls.logger.info(f"Converted joined records to local pandas dataframe, then to dictionary records")
 
-        self.byDaySenateCounty = pd.crosstab(
-            [df['sd'].astype(int), df['county']],
-            [df['year'], df['day_in_ev']]
-        )
+        # Create a list of VoterDetails objects (Pydantic models)
+        return to_record_dicts
 
-        self.byDayCongressionalCounty = pd.crosstab(
-            [df['cd'].astype(int), df['county']],
-            [df['year'], df['day_in_ev']]
-        )
-        self.byAge = pd.crosstab(
-            df['age_range'],
-            df['year']
-        )
+    @classmethod
+    def validate(cls, records: Generator[SOSVoterIntake, None, None]) -> Generator[VoterDetails, None, None]:
+        cls.logger.info("Validating records started...")
+        return (VoterDetails(**dict(x)) for x in cls.update_with_snowflake(records))
 
-# TODO: Republican Primary Score Turnout, Break Out By District
-# TODO: Democrat Primary Score Turnout, Break Out By District
+    @classmethod
+    def write_to_snowflake(cls, records: Generator[VoterDetails, None, None], table_name: str, append: bool = False) -> None:
+        session = cls.session
+        records = [dict(x) for x in records]
+        df = session.create_dataframe(records, schema=list(records[0].keys()))
+        cls.logger.info(f"Created dataframe from records, overwriting Snowflake table {table_name}")
+        df.write.mode("overwrite" if not append else "append").saveAsTable(f"ELECTIONHISTORY_TX.{table_name.upper()}")
+        cls.logger.info(f"Records {'overwritten' if not append else 'appended'} to Snowflake table {table_name}")
+        return df
 
-ct = DailyTurnoutCrosstabs()
+    @classmethod
+    def load_prior_elections(cls):
+        e2020_rep = ElectionYearData(year="2020", party="r")
+        e2022_rep = ElectionYearData(year="2022", party="r")
+        e2022_dem = ElectionYearData(year="2022", party="d")
+
+        _previous_years = iter([e2020_rep, e2022_rep, e2022_dem])
+        for year in list(range(3)):
+            _year = next(_previous_years)
+            cls.logger.info(f"Loading {_year.year} {_year.party} data")
+            _data = cls.validate(_year.data)
+            if year == 2:
+                cls.write_to_snowflake(_data, f"p{_year.year}", append=True)
+            else:
+                cls.write_to_snowflake(_data, f"p{_year.year}")
+            cls.logger.info(f"Finished loading {_year.year} {_year.party} data")
+
+        return None
+
+    @classmethod
+    def load_current_election(cls):
+        e2024_rep = ElectionYearData(year="2024", party="r")
+        e2024_dem = ElectionYearData(year="2024", party="d")
+        _current_year = iter([e2024_rep, e2024_dem])
+        for year in list(range(1, 3)):
+            _year = next(_current_year)
+            cls.logger.info(f"Loading {_year.year} {_year.party} data {year}/2")
+            _data = cls.validate(_year.data)
+            if year == 2:
+                cls.write_to_snowflake(_data, f"p{_year.year}", append=True)
+            else:
+                cls.write_to_snowflake(_data, f"p{_year.year}")
+            cls.logger.info(f"Finished loading {_year.year} {_year.party} data")
+        return None

@@ -3,6 +3,21 @@ from pathlib import Path
 from primary2024_dashboard.logger import Logger
 
 
+class TomlReader:
+    """
+    Reads a TOML file and sets the key-value pairs as attributes of the class.
+    The key-value pairs are accessible as attributes of the class.
+
+    :param file_path: Path to the TOML file
+    :type file_path: Path or str
+    """
+
+    def __init__(self, file_path):
+        config_data = read_toml_file(file_path)
+        for key, value in config_data.items():
+            setattr(self, key, value)
+
+
 def read_toml_file(file_path: Path) -> dict:
     logger = Logger('func:read_toml_file')
     if isinstance(file_path, str):

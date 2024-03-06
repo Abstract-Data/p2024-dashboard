@@ -21,7 +21,7 @@ class Logger:
 
     def __post_init__(self):
         self.logger = logging.Logger(f"{Logger.project_name}@{self.logger_name}")
-        self.logger.setLevel(level=logging.DEBUG)
+        self.logger.setLevel(level=logging.INFO)
 
         # PaperTrail Logging Settings
         remote_handler = SysLogHandler(address=(self.__PAPERTRAIL_HOST, self.__PAPERTRAIL_PORT))
