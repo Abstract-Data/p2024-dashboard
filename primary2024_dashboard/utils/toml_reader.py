@@ -13,9 +13,10 @@ class TomlReader:
     """
 
     def __init__(self, file_path):
-        config_data = read_toml_file(file_path)
-        for key, value in config_data.items():
-            setattr(self, key, value)
+        self.data = read_toml_file(file_path)
+
+    def __call__(self, *args, **kwargs):
+        return self.data
 
 
 def read_toml_file(file_path: Path) -> dict:
